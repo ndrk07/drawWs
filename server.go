@@ -62,7 +62,7 @@ func (s *server) configurate() {
 }
 
 func handleStart() http.Handler {
-	return http.FileServer(http.Dir("../../projectGo/pixel-editor/dist"))
+	return http.FileServer(http.Dir("./dist"))
 }
 
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
