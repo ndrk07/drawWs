@@ -68,7 +68,7 @@ func handleStart() http.Handler {
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Websocket upgrade error:", err)
 		return
 	}
 
@@ -78,6 +78,15 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("Connection succsesfully")
 
+	defer func() {
+		s.mutex.Lock()
+		delete(s.clients, conn)
+		s.mutex.Unlock()
+
+		conn.Close()
+		log.Println("Connection lost")
+	}()
+
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
@@ -85,11 +94,6 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.mutex.Lock()
-	s.clients[conn] = false
-	s.mutex.Unlock()
-
-	log.Println("Connection lost")
 }
 
 func (s *server) handleLoadPixels(w http.ResponseWriter, r *http.Request) {
@@ -127,8 +131,8 @@ func (s *server) broadcastPixel(pixel *PixelRequest) {
 	for conn := range s.clients {
 		if err := conn.WriteJSON(pixel); err != nil {
 			log.Println(err)
-			conn.Close()
 			delete(s.clients, conn)
+			conn.Close()
 		}
 	}
 }
