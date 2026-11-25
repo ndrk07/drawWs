@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -62,7 +63,7 @@ func (s *server) configurate() {
 }
 
 func handleStart() http.Handler {
-	return http.FileServer(http.Dir("../../projectGo/pixel-editor/dist"))
+	return http.FileServer(http.Dir("./dist"))
 }
 
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -78,19 +79,21 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("Connection succsesfully")
 
+	defer func() {
+		s.mutex.Lock()
+		delete(s.clients, conn)
+		s.mutex.Unlock()
+
+		conn.Close()
+		log.Println("Connection lost")
+	}()
+
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
 	}
-
-	s.mutex.Lock()
-	delete(s.clients, conn)
-	s.mutex.Unlock()
-
-	conn.Close()
-	log.Println("Connection lost")
 }
 
 func (s *server) handleLoadPixels(w http.ResponseWriter, r *http.Request) {
@@ -106,18 +109,39 @@ func (s *server) handleLoadPixels(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSavePixel(w http.ResponseWriter, r *http.Request) {
 	pixel := &PixelRequest{}
 
-	if err := json.NewDecoder(r.Body).Decode(pixel); err != nil {
-		http.Error(w, "Invalid Request", http.StatusBadRequest)
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	decoder := json.NewDecoder(r.Body)
+
+	if err := decoder.Decode(pixel); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if pixel.Color == "" {
+		http.Error(w, "Missing pixel fields", http.StatusBadRequest)
+		return
+	}
+
+	if pixel.X < 0 || pixel.X >= 512 ||
+		pixel.Y < 0 || pixel.Y >= 512 {
+		http.Error(w, "Invalid coordinates", http.StatusBadRequest)
+		return
+	}
+
+	if !isValidColor(pixel.Color) {
+		http.Error(w, "Invalid color", http.StatusBadRequest)
 		return
 	}
 
 	field := fmt.Sprintf("%d:%d", pixel.X, pixel.Y)
 
 	if err := s.restore.HSet(r.Context(), redisKey, field, pixel.Color).Err(); err != nil {
-		fmt.Println(err)
+		log.Println("Redis HSet error:", err)
+		http.Error(w, "Failed to save pixel", http.StatusInternalServerError)
 		return
 	}
 
+	w.WriteHeader(http.StatusCreated)
 	s.broadcastPixel(pixel)
 }
 
@@ -128,8 +152,17 @@ func (s *server) broadcastPixel(pixel *PixelRequest) {
 	for conn := range s.clients {
 		if err := conn.WriteJSON(pixel); err != nil {
 			log.Println(err)
-			conn.Close()
 			delete(s.clients, conn)
+			conn.Close()
 		}
 	}
+}
+
+func isValidColor(color string) bool {
+	matched, _ := regexp.MatchString(
+		`^#[0-9a-fA-F]{6}$`,
+		color,
+	)
+
+	return matched
 }
