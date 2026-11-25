@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	redisKey = "canvas:64x64"
+	redisKey = "canvas:512x512"
 )
 
 var upgrader = websocket.Upgrader{
@@ -68,7 +68,7 @@ func handleStart() http.Handler {
 func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Websocket upgrade error:", err)
 		return
 	}
 
@@ -86,9 +86,10 @@ func (s *server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mutex.Lock()
-	s.clients[conn] = false
+	delete(s.clients, conn)
 	s.mutex.Unlock()
 
+	conn.Close()
 	log.Println("Connection lost")
 }
 
